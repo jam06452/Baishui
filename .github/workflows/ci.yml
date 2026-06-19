@@ -50,6 +50,12 @@ jobs:
 
       - run: pnpm -r build
 
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/test
+          PROXY_ENCRYPTION_ROOT_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: pnpm db:migrate
+
       - name: Run tests
         env:
           DATABASE_URL: postgres://test:test@localhost:5432/test
