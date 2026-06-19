@@ -1,12 +1,6 @@
 name: Docker
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "*.md"
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/security.yml"
   workflow_dispatch:
 
 env:
