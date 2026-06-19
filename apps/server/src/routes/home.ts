@@ -295,19 +295,25 @@ window.closeSidebar = () => { $("#sidebar").classList.remove("open"); };
 
 // ─── overview ───────────────────────────────────────────────
 async function renderOverview() {
-  const [summary, providers, keys] = await Promise.all([
+  const [summary, lifetimeStats, providers, keys] = await Promise.all([
     api("/api/analytics/summary").catch(() => ({ ok: false, body: {} })),
+    api("/api/requests/stats?range=lifetime").catch(() => ({ ok: false, body: { stats: {} } })),
     api("/api/providers").catch(() => ({ ok: false, body: { providers: [] } })),
     api("/api/keys").catch(() => ({ ok: false, body: { keys: [] } })),
   ]);
   const s = summary.ok ? summary.body.summary : {};
+  const lt = lifetimeStats.ok ? (lifetimeStats.body.stats || {}) : {};
   const formatNum = (v) => v !== null && v !== undefined ? Number(v).toLocaleString() : "—";
+  const formatCost = (v) => v !== null && v !== undefined && Number(v) > 0 ? "$" + Number(v).toFixed(2) : "—";
   $("#page-content").innerHTML = \`
     <div class="stats-grid mb-4">
       <div class="stat"><div class="stat-label">Requests (24h)</div><div class="stat-value">\${formatNum(s.requests)}</div><div class="stat-sub">total proxied</div></div>
-      <div class="stat"><div class="stat-label">Input tokens</div><div class="stat-value">\${formatNum(s.input_tokens)}</div><div class="stat-sub">prompt tokens</div></div>
-      <div class="stat"><div class="stat-label">Output tokens</div><div class="stat-value">\${formatNum(s.output_tokens)}</div><div class="stat-sub">completion tokens</div></div>
-      <div class="stat"><div class="stat-label">Errors</div><div class="stat-value" style="color:\${(s.errors||0) > 0 ? "var(--red)" : "var(--green)"}">\${formatNum(s.errors)}</div><div class="stat-sub">status ≥ 400</div></div>
+      <div class="stat"><div class="stat-label">Cost (24h)</div><div class="stat-value">\${formatCost(s.cost)}</div><div class="stat-sub">estimated spend</div></div>
+      <div class="stat"><div class="stat-label">Total requests</div><div class="stat-value">\${formatNum(lt.total)}</div><div class="stat-sub">all time</div></div>
+      <div class="stat"><div class="stat-label">Total cost</div><div class="stat-value" style="color:var(--accent)">\${formatCost(lt.total_cost)}</div><div class="stat-sub">all time</div></div>
+      <div class="stat"><div class="stat-label">Input tokens (24h)</div><div class="stat-value">\${formatNum(s.input_tokens)}</div><div class="stat-sub">prompt tokens</div></div>
+      <div class="stat"><div class="stat-label">Output tokens (24h)</div><div class="stat-value">\${formatNum(s.output_tokens)}</div><div class="stat-sub">completion tokens</div></div>
+      <div class="stat"><div class="stat-label">Errors (24h)</div><div class="stat-value" style="color:\${(s.errors||0) > 0 ? "var(--red)" : "var(--green)"}">\${formatNum(s.errors)}</div><div class="stat-sub">status ≥ 400</div></div>
     </div>
     <div class="card">
       <div class="card-header"><h3>Providers</h3><span class="badge badge-zinc">\${providers.ok ? (providers.body.providers || []).length : 0}</span></div>
@@ -342,17 +348,24 @@ async function loadRequests() {
   const list = reqs.ok ? (reqs.body.requests || []) : [];
   const s = stats.ok ? (stats.body.stats || {}) : {};
   const fmt = (v) => v !== null && v !== undefined ? Number(v).toLocaleString() : "—";
+  const fmtCost = (v) => v !== null && v !== undefined && Number(v) > 0 ? "$" + Number(v).toFixed(2) : "—";
   const fmtTime = (t) => { const d = new Date(t); return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }); };
   const fmtMs = (v) => v !== null && v !== undefined ? v + "ms" : "—";
+
+  // Fetch lifetime stats in parallel
+  const ltRes = await api("/api/requests/stats?range=lifetime").catch(() => ({ ok: false, body: { stats: {} } }));
+  const lt = ltRes.ok ? (ltRes.body.stats || {}) : {};
 
   $("#page-content").innerHTML = \`
     <div class="stats-grid mb-4">
       <div class="stat"><div class="stat-label">Total (24h)</div><div class="stat-value">\${fmt(s.total)}</div></div>
-      <div class="stat"><div class="stat-label">Successes</div><div class="stat-value" style="color:var(--green)">\${fmt(s.successes)}</div></div>
-      <div class="stat"><div class="stat-label">Errors</div><div class="stat-value" style="color:\${(s.errors||0)>0?"var(--red)":"var(--green)"}">\${fmt(s.errors)}</div></div>
+      <div class="stat"><div class="stat-label">Successes (24h)</div><div class="stat-value" style="color:var(--green)">\${fmt(s.successes)}</div></div>
+      <div class="stat"><div class="stat-label">Errors (24h)</div><div class="stat-value" style="color:\${(s.errors||0)>0?"var(--red)":"var(--green)"}">\${fmt(s.errors)}</div></div>
+      <div class="stat"><div class="stat-label">Cost (24h)</div><div class="stat-value">\${fmtCost(s.total_cost)}</div></div>
+      <div class="stat"><div class="stat-label">Total requests</div><div class="stat-value">\${fmt(lt.total)}</div><div class="stat-sub">all time</div></div>
+      <div class="stat"><div class="stat-label">Total cost</div><div class="stat-value" style="color:var(--accent)">\${fmtCost(lt.total_cost)}</div><div class="stat-sub">all time</div></div>
       <div class="stat"><div class="stat-label">Avg latency</div><div class="stat-value">\${fmtMs(s.avg_latency_ms)}</div></div>
-      <div class="stat"><div class="stat-label">Input tokens</div><div class="stat-value">\${fmt(s.total_input_tokens)}</div></div>
-      <div class="stat"><div class="stat-label">Output tokens</div><div class="stat-value">\${fmt(s.total_output_tokens)}</div></div>
+      <div class="stat"><div class="stat-label">Input tokens (24h)</div><div class="stat-value">\${fmt(s.total_input_tokens)}</div></div>
     </div>
     <div class="card">
       <div class="card-body" style="padding:0">

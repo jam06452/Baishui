@@ -53,11 +53,14 @@ export function requestRoutes(rt: Runtime): Hono<AppVars> {
   });
 
   // ── Stats summary for the requests page header ──────────────
+  // ponytail: range=lifetime drops the 24h filter for all-time totals + cost.
   app.get("/stats", async (c) => {
     const user = c.get("user");
+    const range = c.req.query("range");
     const userFilter = user.role === "member" || user.role === "viewer"
       ? sql`AND user_id = ${user.id}`
       : sql``;
+    const timeFilter = range === "lifetime" ? sql`` : sql`AND created_at >= NOW() - INTERVAL '24 hours'`;
 
     const result = await rt.db.db.execute(sql`
       SELECT
@@ -67,9 +70,10 @@ export function requestRoutes(rt: Runtime): Hono<AppVars> {
         COALESCE(sum(input_tokens), 0)::bigint AS total_input_tokens,
         COALESCE(sum(output_tokens), 0)::bigint AS total_output_tokens,
         COALESCE(avg(latency_ms), 0)::int AS avg_latency_ms,
-        COALESCE(max(latency_ms), 0)::int AS max_latency_ms
+        COALESCE(max(latency_ms), 0)::int AS max_latency_ms,
+        COALESCE(sum(cost_estimate), 0)::numeric AS total_cost
       FROM request_logs
-      WHERE created_at >= NOW() - INTERVAL '24 hours' ${userFilter}
+      WHERE 1=1 ${timeFilter} ${userFilter}
     `);
 
     const row = (result as { rows?: unknown[] }).rows?.[0] ?? null;
