@@ -1,0 +1,65 @@
+# Baishui — production docker-compose
+# Usage:
+#   1. Copy .env.example to .env, set PROXY_ENCRYPTION_ROOT_KEY + DB_PASSWORD
+#   2. Pull: docker compose -f docker-compose-prod.yml pull
+#   3. Start: docker compose -f docker-compose-prod.yml up -d
+#   4. Navigate to http://your-server:8080 → setup wizard
+#
+# Uses external networks: supabase_default (for the DB at host "db") +
+# cloudflare (for tunnel/cloudflared). Uses pre-built GHCR image.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - baishui-internal
+
+  baishui:
+    image: ghcr.io/${DOCKER_OWNER:-jam06452}/baishui:latest
+    # ponytail: for ARM64 hosts, use :latest-arm instead:
+    # image: ghcr.io/${DOCKER_OWNER:-jam06452}/baishui:latest-arm
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ROLE: proxy
+      PORT: 8080
+      # ponytail: connects to the external Postgres on the supabase_default
+      # network. Host "db" resolves via that network's DNS. User is postgres,
+      # password comes from .env (DB_PASSWORD). Database name is baishui.
+      DATABASE_URL: postgres://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/baishui
+      REDIS_URL: redis://redis:6379
+      DB_POOL_MAX: ${DB_POOL_MAX:-50}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      NODE_ENV: ${NODE_ENV:-development}
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "${PORT:-8080}:8080"
+    networks:
+      - baishui-internal
+      - supabase_default
+      - cloudflare
+
+volumes:
+  redisdata:
+
+networks:
+  baishui-internal:
+    driver: bridge
+  # ponytail: external networks created by other compose stacks.
+  # supabase_default = where the Postgres DB lives (host "db", port 5432).
+  # cloudflare = where cloudflared/tunnel lives for ingress.
+  supabase_default:
+    external: true
+  cloudflare:
+    external: true

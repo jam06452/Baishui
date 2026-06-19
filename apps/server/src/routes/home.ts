@@ -176,7 +176,7 @@ tr:hover td{background:var(--bg-hover)}
 <div id="toast-container"></div>
 <div id="modal-container"></div>
 
-<script>
+<script data-cfasync="false">
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 const api = async (p, o) => { const r = await fetch(p, {headers:{"Content-Type":"application/json"}, ...o}); const b = await r.json().catch(()=>({})); return {ok:r.ok, status:r.status, body:b}; };
@@ -234,7 +234,7 @@ function showSetup() {
     $("#su-btn").disabled = true;
     const r = await api("/api/setup", { method: "POST", body: JSON.stringify({ email: $("#su-email").value, name: $("#su-name").value, password: pw }) });
     $("#su-btn").disabled = false;
-    if (r.ok) location.reload(); else $("#su-err").textContent = r.body?.error?.message || "Setup failed";
+    if (r.ok) { window.location.href = window.location.pathname + "?t=" + Date.now(); } else $("#su-err").textContent = r.body?.error?.message || "Setup failed";
   };
 }
 
@@ -256,7 +256,7 @@ function showLogin() {
     $("#lg-btn").disabled = true;
     const r = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email: $("#lg-email").value, password: $("#lg-pw").value }) });
     $("#lg-btn").disabled = false;
-    if (r.ok) location.reload(); else $("#lg-err").textContent = r.body?.error?.message || "Login failed";
+    if (r.ok) { window.location.href = window.location.pathname + "?t=" + Date.now(); } else $("#lg-err").textContent = r.body?.error?.message || "Login failed";
   };
 }
 
