@@ -89,6 +89,10 @@ export function securityHeaders(): MiddlewareHandler {
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
     c.header("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+    // ponytail: Cloudflare caches responses without explicit Cache-Control.
+    // API responses must never be cached — they're dynamic. This prevents
+    // stale {"providers":[]} from being served after data changes.
+    c.header("Cache-Control", "no-store");
     c.header(
       "Content-Security-Policy",
       "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'",
