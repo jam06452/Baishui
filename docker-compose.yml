@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=300", "-c", "shared_buffers=256MB", "-c", "work_mem=8MB"]
+    environment:
+      POSTGRES_USER: aiproxy
+      POSTGRES_PASSWORD: aiproxy
+      POSTGRES_DB: aiproxy
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiproxy -d aiproxy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "6379:6379"
+
+  proxy:
+    build: .
+    image: baishui:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ROLE: proxy
+      PORT: 8080
+      # Override .env host-relative URLs with compose-internal hostnames.
+      DATABASE_URL: postgres://aiproxy:aiproxy@postgres:5432/aiproxy
+      REDIS_URL: redis://redis:6379
+      DB_POOL_MAX: 50
+      # ponytail: leave NODE_ENV unset for HTTP-only self-host. Set to
+      # production only when behind a TLS-terminating reverse proxy (Caddy/
+      # nginx) — it controls the Secure cookie flag, which browsers reject
+      # over plain HTTP.
+      NODE_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
+  redisdata:
