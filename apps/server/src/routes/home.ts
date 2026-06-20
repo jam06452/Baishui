@@ -887,7 +887,7 @@ function keyCreateModal() {
         <div class="modal-field"><label>Key name (optional)</label><input id="ck-name" placeholder="ci-bot"></div>
         <div class="modal-field"><label>Rate limit (requests/min) — blank = unlimited</label><input id="ck-rpm" type="number" placeholder="100"></div>
         <div class="modal-field"><label>Daily token limit — blank = unlimited</label><input id="ck-tokens" type="number" placeholder="100000"></div>
-        <div class="modal-field"><label>Daily cost limit ($) — blank = unlimited</label><input id="ck-cost" type="number" step="0.01" placeholder="5.00"></div>
+        <div class="modal-field"><label>Daily cost limit ($) — blank = $50 default</label><input id="ck-cost" type="number" step="0.01" placeholder="50.00"></div>
         <div class="modal-actions"><button class="btn-ghost" onclick="closeModal()">Cancel</button><button class="btn-primary" id="ck-create">Create</button></div>
       </div>
     </div>\`;

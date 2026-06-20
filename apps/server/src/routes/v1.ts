@@ -86,9 +86,9 @@ async function enforceKeyLimits(
     }
   }
 
-  // Daily cost check
-  const costLimit = apiKey.costLimitDaily ?? null;
-  if (costLimit !== null && Number(costLimit) > 0) {
+  // Daily cost check — ponytail: default $50/day, override per key
+  const costLimit = apiKey.costLimitDaily ?? "50.00";
+  if (Number(costLimit) > 0) {
     const csKey = `cs:${apiKey.id}:${todayKey()}`;
     const cost = Number(await redis.get(csKey) ?? 0);
     if (cost >= Number(costLimit)) {
