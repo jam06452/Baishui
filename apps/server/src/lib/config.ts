@@ -8,9 +8,11 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
   DB_POOL_MAX: z.coerce.number().int().positive().default(50),
   DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
-  // Cache TTLs (seconds). 0 disables caching.
-  CACHE_TTL_AUTH_S: z.coerce.number().int().nonnegative().default(60),
-  CACHE_TTL_MODEL_S: z.coerce.number().int().nonnegative().default(60),
+  // Cache TTLs (seconds). 0 disables caching — every request hits DB fresh.
+  // ponytail: disabled by default to prevent stale data in the UI. Re-enable
+  // (set to 60) only if DB load becomes a bottleneck under high RPS.
+  CACHE_TTL_AUTH_S: z.coerce.number().int().nonnegative().default(0),
+  CACHE_TTL_MODEL_S: z.coerce.number().int().nonnegative().default(0),
   // Usage logging buffer: flush every N ms OR when N logs queued (whichever first).
   USAGE_FLUSH_MS: z.coerce.number().int().positive().default(1000),
   USAGE_FLUSH_BATCH: z.coerce.number().int().positive().default(500),
