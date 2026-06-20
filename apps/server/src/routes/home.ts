@@ -852,41 +852,92 @@ window.deleteRoute = async (id) => {
 async function renderKeys() {
   const r = await api("/api/keys");
   const list = r.ok ? (r.body.keys || []) : [];
-  $("#topbar-actions").innerHTML = '<button class="btn-primary btn-sm" onclick="createApiKey()">+ Create key</button>';
+  $("#topbar-actions").innerHTML = '<button class="btn-primary btn-sm" id="create-key-btn">+ Create key</button>';
+  setTimeout(() => { const b = $("#create-key-btn"); if (b) b.onclick = keyCreateModal; }, 0);
+  const fmtLimit = (v) => v !== null && v !== undefined ? v : "∞";
   $("#page-content").innerHTML = \`
     <div class="card"><div class="card-body" style="padding:0">
     \${list.length ? \`
-    <table><thead><tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Last used</th><th>Status</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>Name</th><th>Prefix</th><th>RPM</th><th>Tokens/day</th><th>Cost/day</th><th>Last used</th><th>Status</th><th></th></tr></thead><tbody>
     \${list.map(k => \`<tr>
       <td style="font-weight:500">\${k.name || "—"}</td>
       <td class="mono">\${k.keyPrefix}</td>
-      <td>\${(k.scopes || []).map(s => '<span class="badge badge-accent">' + s + '</span>').join(" ")}</td>
+      <td class="mono text-2">\${fmtLimit(k.rateLimitRpm)}</td>
+      <td class="mono text-2">\${fmtLimit(k.tokenLimitDaily)}</td>
+      <td class="mono text-2">\${k.costLimitDaily ? "$" + Number(k.costLimitDaily).toFixed(2) : "∞"}</td>
       <td class="mono text-2">\${k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleDateString() : "never"}</td>
       <td>\${k.revokedAt ? '<span class="badge badge-red"><span class="dot dot-red"></span>revoked</span>' : '<span class="badge badge-green"><span class="dot dot-green"></span>active</span>'}</td>
-      <td>\${k.revokedAt ? "" : '<button class="btn-danger btn-sm" onclick="revokeKey(\\'' + k.id + '\\')">Revoke</button>'}</td>
+      <td>\${k.revokedAt ? "" : \`<button class="btn-ghost btn-sm" id="edit-key-\${k.id}" data-kid="\${k.id}">Edit</button> <button class="btn-danger btn-sm" onclick="revokeKey('\${k.id}')">Revoke</button>\`}</td>
     </tr>\`).join("")}
     </tbody></table>\` : '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>No API keys yet. Create one to use the proxy.</div>'}
-    </div></div>\`;
+    </div></div>
+  \`;
+  // wire up edit buttons
+  list.forEach(k => {
+    const btn = $("#edit-key-" + k.id);
+    if (btn) btn.onclick = () => keyEditModal(k);
+  });
 }
 
-window.createApiKey = async () => {
-  const name = prompt("Key name (optional):", "");
-  const r = await api("/api/keys", { method: "POST", body: JSON.stringify({ name: name || undefined }) });
-  if (r.ok && r.body.key) {
-    $("#modal-container").innerHTML = \`
-      <div class="modal-bg" onclick="if(event.target===this)closeModal()">
-        <div class="modal">
-          <h3>API key created</h3>
-          <p class="text-2 text-sm mb-4">Copy this key now — it won't be shown again.</p>
-          <div class="flex gap-2 items-center mb-4" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-sm);padding:var(--sp-3)">
-            <code class="mono" style="flex:1;word-break:break-all;font-size:12px">\${r.body.key}</code>
-            <span class="copy-btn" onclick="copy('\${r.body.key}')">📋</span>
+function keyCreateModal() {
+  $("#modal-container").innerHTML = \`
+    <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <h3>Create API key</h3>
+        <div class="modal-field"><label>Key name (optional)</label><input id="ck-name" placeholder="ci-bot"></div>
+        <div class="modal-field"><label>Rate limit (requests/min) — blank = unlimited</label><input id="ck-rpm" type="number" placeholder="100"></div>
+        <div class="modal-field"><label>Daily token limit — blank = unlimited</label><input id="ck-tokens" type="number" placeholder="100000"></div>
+        <div class="modal-field"><label>Daily cost limit ($) — blank = unlimited</label><input id="ck-cost" type="number" step="0.01" placeholder="5.00"></div>
+        <div class="modal-actions"><button class="btn-ghost" onclick="closeModal()">Cancel</button><button class="btn-primary" id="ck-create">Create</button></div>
+      </div>
+    </div>\`;
+  $("#ck-create").onclick = async () => {
+    const body = {
+      name: $("#ck-name").value || undefined,
+      rateLimitRpm: $("#ck-rpm").value ? Number($("#ck-rpm").value) : null,
+      tokenLimitDaily: $("#ck-tokens").value ? Number($("#ck-tokens").value) : null,
+      costLimitDaily: $("#ck-cost").value ? $("#ck-cost").value : null,
+    };
+    const r = await api("/api/keys", { method: "POST", body: JSON.stringify(body) });
+    if (r.ok && r.body.key) {
+      closeModal();
+      $("#modal-container").innerHTML = \`
+        <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+          <div class="modal">
+            <h3>API key created</h3>
+            <p class="text-2 text-sm mb-4">Copy this key now — it won't be shown again.</p>
+            <div class="flex gap-2 items-center mb-4" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-sm);padding:var(--sp-3)">
+              <code class="mono" style="flex:1;word-break:break-all;font-size:12px">\${r.body.key}</code>
+              <span class="copy-btn" onclick="copy('\${r.body.key}')">📋</span>
+            </div>
+            <div class="modal-actions"><button class="btn-primary" onclick="closeModal();navigate('keys')">Done</button></div>
           </div>
-          <div class="modal-actions"><button class="btn-primary" onclick="closeModal();navigate('keys')">Done</button></div>
-        </div>
-      </div>\`;
-  } else toast(r.body?.error?.message || "Failed", "err");
-};
+        </div>\`;
+    } else toast(r.body?.error?.message || "Failed", "err");
+  };
+}
+
+function keyEditModal(k) {
+  $("#modal-container").innerHTML = \`
+    <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <h3>Edit key: \${k.name || k.keyPrefix}</h3>
+        <div class="modal-field"><label>Rate limit (requests/min) — blank = unlimited</label><input id="ek-rpm" type="number" value="\${k.rateLimitRpm ?? ''}"></div>
+        <div class="modal-field"><label>Daily token limit — blank = unlimited</label><input id="ek-tokens" type="number" value="\${k.tokenLimitDaily ?? ''}"></div>
+        <div class="modal-field"><label>Daily cost limit ($) — blank = unlimited</label><input id="ek-cost" type="number" step="0.01" value="\${k.costLimitDaily ?? ''}"></div>
+        <div class="modal-actions"><button class="btn-ghost" onclick="closeModal()">Cancel</button><button class="btn-primary" id="ek-save">Save</button></div>
+      </div>
+    </div>\`;
+  $("#ek-save").onclick = async () => {
+    const body = {
+      rateLimitRpm: $("#ek-rpm").value ? Number($("#ek-rpm").value) : null,
+      tokenLimitDaily: $("#ek-tokens").value ? Number($("#ek-tokens").value) : null,
+      costLimitDaily: $("#ek-cost").value ? $("#ek-cost").value : null,
+    };
+    const r = await api("/api/keys/" + k.id, { method: "PATCH", body: JSON.stringify(body) });
+    if (r.ok) { closeModal(); toast("Limits updated"); navigate("keys"); } else toast("Failed", "err");
+  };
+}
 
 window.revokeKey = async (id) => {
   if (!confirm("Revoke this API key? This cannot be undone.")) return;

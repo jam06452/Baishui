@@ -107,12 +107,37 @@ export const apiKeys = pgTable("api_keys", {
     .$type<ApiKeyScope[]>()
     .notNull()
     .default(["chat", "models"]),
+  // ponytail: per-key custom limits. null = use server default / unlimited.
+  rateLimitRpm: integer("rate_limit_rpm"),
+  tokenLimitDaily: bigint("token_limit_daily", { mode: "number" }),
+  costLimitDaily: numeric("cost_limit_daily", { precision: 12, scale: 4 }),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 export type ApiKeyRow = typeof apiKeys.$inferSelect;
 export type NewApiKeyRow = typeof apiKeys.$inferInsert;
+
+// ── management API keys (for automation/scripts) ──────────────
+export const managementKeys = pgTable(
+  "management_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    keyHash: text("key_hash").notNull().unique(),
+    keyPrefix: text("key_prefix").notNull(),
+    name: text("name").notNull(),
+    scopes: text("scopes")
+      .array()
+      .notNull()
+      .default(["keys"]),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+export type ManagementKey = typeof managementKeys.$inferSelect;
+export type NewManagementKey = typeof managementKeys.$inferInsert;
 
 // ── providers (org-level shared pool) ──────────────────────────
 export const providers = pgTable("providers", {

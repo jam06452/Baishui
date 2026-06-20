@@ -8,6 +8,7 @@ import { selectKey, incrInflight, decrInflight, recordSuccess, recordError } fro
 import { getAdapter, type StreamCtx } from "../lib/adapters/index.js";
 import { cacheGetOrSet, authCacheKey, modelCacheKey } from "../lib/cache.js";
 import { applyStrategy } from "../lib/load-balancing.js";
+import type { RedisClient } from "../lib/redis.js";
 import {
   apiKeys, users, providers, providerKeys, models, routingRules,
   type ApiKeyRow, type User, type Provider, type ProviderKey, type Model,
@@ -42,6 +43,82 @@ interface ResolvedModelCache {
   model: Model;
   provider: Provider;
   keys: ProviderKey[];
+}
+
+// ─── per-key rate limit enforcement ───────────────────────────
+// ponytail: three tiers — RPM (sliding minute), tokens/day, cost/day.
+// All tracked in Redis with TTL until midnight UTC. null limit = unlimited.
+
+function todayKey(): string {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function secondsUntilMidnightUTC(): number {
+  const now = new Date();
+  const midnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  return Math.floor((midnight.getTime() - now.getTime()) / 1000);
+}
+
+async function enforceKeyLimits(
+  redis: RedisClient | null,
+  apiKey: ApiKeyRow,
+): Promise<{ ok: boolean; message?: string; type?: string }> {
+  if (!redis) return { ok: true }; // no redis = no limits
+
+  // RPM check — ponytail: uses per-key limit or server default (100)
+  const rpmLimit = apiKey.rateLimitRpm ?? 100;
+  if (rpmLimit > 0) {
+    const rpmKey = `rl:${apiKey.id}:${Math.floor(Date.now() / 60000)}`;
+    const count = await redis.incr(rpmKey);
+    if (count === 1) await redis.expire(rpmKey, 60);
+    if (count > rpmLimit) {
+      return { ok: false, message: `rate limit exceeded (${rpmLimit} req/min)`, type: "rate_limit_error" };
+    }
+  }
+
+  // Daily token check
+  const tokenLimit = apiKey.tokenLimitDaily ?? null;
+  if (tokenLimit !== null && tokenLimit > 0) {
+    const tkKey = `tk:${apiKey.id}:${todayKey()}`;
+    const tokens = Number(await redis.get(tkKey) ?? 0);
+    if (tokens >= tokenLimit) {
+      return { ok: false, message: `daily token limit exceeded (${tokenLimit} tokens/day)`, type: "rate_limit_error" };
+    }
+  }
+
+  // Daily cost check
+  const costLimit = apiKey.costLimitDaily ?? null;
+  if (costLimit !== null && Number(costLimit) > 0) {
+    const csKey = `cs:${apiKey.id}:${todayKey()}`;
+    const cost = Number(await redis.get(csKey) ?? 0);
+    if (cost >= Number(costLimit)) {
+      return { ok: false, message: `daily cost limit exceeded ($${Number(costLimit).toFixed(2)}/day)`, type: "rate_limit_error" };
+    }
+  }
+
+  return { ok: true };
+}
+
+async function incrementDailyCounters(
+  redis: RedisClient | null,
+  apiKeyId: string,
+  inputTokens: number,
+  outputTokens: number,
+  costEstimate: string | null,
+): Promise<void> {
+  if (!redis) return;
+  const ttl = secondsUntilMidnightUTC();
+  const totalTokens = inputTokens + outputTokens;
+  if (totalTokens > 0) {
+    const tkKey = `tk:${apiKeyId}:${todayKey()}`;
+    await redis.incrby(tkKey, totalTokens);
+    await redis.expire(tkKey, ttl);
+  }
+  if (costEstimate && Number(costEstimate) > 0) {
+    const csKey = `cs:${apiKeyId}:${todayKey()}`;
+    await redis.incrbyfloat(csKey, Number(costEstimate));
+    await redis.expire(csKey, ttl);
+  }
 }
 
 // ─── auth middleware (cached) ───────────────────────────────────
@@ -230,9 +307,11 @@ export function v1Routes(rt: Runtime): Hono<V1Vars> {
     }
     c.set("apiKey", authed.apiKey);
     c.set("user", authed.user);
-    // ponytail: dropped per-request lastUsedAt update. Worker computes it
-    // from request_logs aggregation; updating per-request was a DB write
-    // on the hot path that nobody needed.
+    // ponytail: enforce per-key rate limits on ALL /v1/* requests (not just chat)
+    const limitCheck = await enforceKeyLimits(rt.redis, authed.apiKey);
+    if (!limitCheck.ok) {
+      return c.json({ error: { message: limitCheck.message!, type: limitCheck.type! } }, 429);
+    }
     await next();
   });
 
@@ -280,7 +359,8 @@ export function v1Routes(rt: Runtime): Hono<V1Vars> {
 
     const isStream = body.stream === true;
     const userId = c.get("user").id;
-    const apiKeyId = c.get("apiKey").id;
+    const apiKeyRow = c.get("apiKey");
+    const apiKeyId = apiKeyRow.id;
     let lastError: { status: number; message: string; type: string } = { status: 502, message: "upstream unreachable", type: "server_error" };
 
     for (let i = 0; i < resolved.candidates.length; i++) {
@@ -327,6 +407,9 @@ export function v1Routes(rt: Runtime): Hono<V1Vars> {
         const { body: normalized, usage } = adapter.normalizeResponse(text);
         await decrInflight(rt.redis, keyId);
         logUsage(rt, { userId, apiKeyId, providerId: provider.id, providerKeyId: providerKey.id, modelId: model.id, status: 200, latencyMs, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, stream: false, servedByModelId: model.id, inputPricePer1m: model.inputPricePer1m, outputPricePer1m: model.outputPricePer1m });
+        // ponytail: increment per-key daily token + cost counters in Redis
+        const _cost = (usage.inputTokens * Number(model.inputPricePer1m ?? 0) + usage.outputTokens * Number(model.outputPricePer1m ?? 0)) / 1_000_000;
+        void incrementDailyCounters(rt.redis, apiKeyId, usage.inputTokens, usage.outputTokens, _cost > 0 ? _cost.toFixed(6) : null);
         return new Response(JSON.stringify(normalized), { status: 200, headers: { "content-type": "application/json", "x-or-served-by": `${provider.name}/${model.upstreamId}` } });
       }
 
@@ -368,6 +451,9 @@ export function v1Routes(rt: Runtime): Hono<V1Vars> {
         } finally {
           await decrInflight(rt.redis, keyId);
           logUsage(rt, { userId, apiKeyId, providerId: provider.id, providerKeyId: providerKey.id, modelId: model.id, status: 200, latencyMs: Date.now() - start, inputTokens, outputTokens, stream: true, servedByModelId: model.id, inputPricePer1m: model.inputPricePer1m, outputPricePer1m: model.outputPricePer1m });
+          // ponytail: increment per-key daily token + cost counters in Redis
+          const _cost = (inputTokens * Number(model.inputPricePer1m ?? 0) + outputTokens * Number(model.outputPricePer1m ?? 0)) / 1_000_000;
+          void incrementDailyCounters(rt.redis, apiKeyId, inputTokens, outputTokens, _cost > 0 ? _cost.toFixed(6) : null);
         }
       });
     }

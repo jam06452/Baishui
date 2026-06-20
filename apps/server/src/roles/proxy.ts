@@ -13,6 +13,7 @@ import { analyticsRoutes } from "../routes/analytics.js";
 import { requestRoutes } from "../routes/requests.js";
 import { routingCrudRoutes } from "../routes/routing.js";
 import { loadBalancingRoutes } from "../routes/load-balancing.js";
+import { managementRoutes } from "../routes/management.js";
 import { setupRoutes } from "../routes/setup.js";
 import { v1Routes } from "../routes/v1.js";
 import { csrfMiddleware } from "../lib/auth.js";
@@ -57,11 +58,12 @@ export async function runProxy(rt: Runtime): Promise<void> {
   app.route("/api/requests", requestRoutes(rt));
   app.route("/api/routes", routingCrudRoutes(rt));
   app.route("/api/loadbalancing", loadBalancingRoutes(rt));
+  app.route("/api/management", managementRoutes(rt));
 
-  // /v1: larger body limit (chat prompts can be chunky), then rate limit per
-  // API key, then the proxy routes.
+  // /v1: larger body limit (chat prompts can be chunky), then the proxy routes.
+  // ponytail: per-key rate limiting is handled inside v1.ts auth middleware
+  // (enforceKeyLimits checks RPM, tokens/day, cost/day per key).
   app.use("/v1/*", bodySizeLimit(MAX_BODY_PROXY));
-  app.use("/v1/*", rateLimit(rt.redis));
   app.route("/v1", v1Routes(rt));
 
   app.notFound((c) => c.json({ error: { message: "not found", type: "not_found" } }, 404));

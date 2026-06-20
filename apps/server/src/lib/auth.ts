@@ -4,7 +4,8 @@ import { getCookie, setCookie } from "hono/cookie";
 import type { MiddlewareHandler } from "hono";
 import { eq, and, gt } from "drizzle-orm";
 import type { Db, User, Session } from "@baishui/db";
-import { sessions, users } from "@baishui/db";
+import { sessions, users, managementKeys, type ManagementKey } from "@baishui/db";
+import { hashApiKey } from "./api-key.js";
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_SLIDE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -193,4 +194,29 @@ export function generatePkce(): { verifier: string; challenge: string } {
 
 export function generateState(): string {
   return randomBytes(16).toString("hex");
+}
+
+// ── Management API key auth ──────────────────────────────────
+// ponytail: mgmt- prefixed keys for automation. Scoped to actions.
+export function requireManagementKey(db: Db, ...requiredScopes: string[]): MiddlewareHandler {
+  return async (c, next) => {
+    const auth = c.req.header("authorization");
+    if (!auth?.startsWith("Bearer mgmt-")) {
+      return c.json({ error: { message: "management API key required", type: "unauthorized" } }, 401);
+    }
+    const key = auth.slice(7);
+    const hash = hashApiKey(key);
+    const [row] = await db.select().from(managementKeys).where(eq(managementKeys.keyHash, hash)).limit(1);
+    if (!row || row.revokedAt) {
+      return c.json({ error: { message: "invalid management key", type: "unauthorized" } }, 401);
+    }
+    const hasScope = requiredScopes.some(s => row.scopes.includes(s));
+    if (!hasScope) {
+      return c.json({ error: { message: "insufficient scope", type: "forbidden" } }, 403);
+    }
+    // fire-and-forget lastUsedAt update
+    db.update(managementKeys).set({ lastUsedAt: new Date() }).where(eq(managementKeys.id, row.id)).catch(() => {});
+    c.set("mgmtKey" as never, row as never);
+    await next();
+  };
 }
